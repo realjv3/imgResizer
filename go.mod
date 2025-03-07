@@ -1,4 +1,4 @@
-module freshPaint
+module github.com/realjv3/imgResizer
 
 go 1.24
 

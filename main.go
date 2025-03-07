@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"freshPaint/rest"
+	"github.com/realjv3/imgResizer/rest"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
