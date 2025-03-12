@@ -3,16 +3,15 @@ package rest
 import (
 	"archive/zip"
 	"fmt"
-	"image/jpeg"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
 
-	"github.com/nfnt/resize"
+	"github.com/realjv3/imgResizer/util"
 )
 
-func Resize(w http.ResponseWriter, r *http.Request) {
+func ResizeHandler(w http.ResponseWriter, r *http.Request) {
 	// validate e.g. get dimensions
 	height := r.URL.Query().Get("height")
 	width := r.URL.Query().Get("width")
@@ -22,16 +21,22 @@ func Resize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := r.ParseMultipartForm(0)
+	cols, err := strconv.Atoi(height)
 	if err != nil {
-		http.Error(w, "error parsing multipart form", http.StatusInternalServerError)
+		http.Error(w, "error parsing desired height", http.StatusInternalServerError)
 		return
 	}
 
-	if r.MultipartForm == nil {
-		http.Error(w, "multipart from is nil", http.StatusInternalServerError)
+	rows, err := strconv.Atoi(width)
+	if err != nil {
+		http.Error(w, "error parsing desired width", http.StatusInternalServerError)
 		return
+	}
 
+	err = r.ParseMultipartForm(0)
+	if err != nil || r.MultipartForm == nil {
+		http.Error(w, "it appears no images were passed in the request", http.StatusBadRequest)
+		return
 	}
 
 	output, err := os.Create("output.zip")
@@ -46,92 +51,34 @@ func Resize(w http.ResponseWriter, r *http.Request) {
 
 	for _, files := range r.MultipartForm.File {
 		for _, file := range files {
-			// imagick load image
 			f, _ := file.Open()
 			defer f.Close()
 
-			img, err := jpeg.Decode(f)
+			resizedFile, err := util.ResizeFile(f, cols, rows)
 			if err != nil {
-				http.Error(w, fmt.Sprintf("error reading into imagick: %w", err), http.StatusInternalServerError)
+				http.Error(w, fmt.Sprintf("error resizing file: %w", err), http.StatusInternalServerError)
 				return
 			}
 
-			// resize
-			cols, _ := strconv.Atoi(height)
-			rows, _ := strconv.Atoi(width)
-			resized := resize.Resize(uint(rows), uint(cols), img, resize.Lanczos2)
-			out, err := os.Create(file.Filename)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("error creating file: %w", err), http.StatusInternalServerError)
-				return
-			}
-
-			err = jpeg.Encode(out, resized, nil)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("error encoding jpeg: %w", err), http.StatusInternalServerError)
-				return
-			}
-
-			// out needs to be closed and reopened to reset the file pointer back to the beginning of the file
-			err = out.Close()
-			if err != nil {
-				http.Error(w, fmt.Sprintf("error closing temporary jpeg: %w", err), http.StatusInternalServerError)
-				return
-			}
-
-			out, err = os.Open(file.Filename)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("error opening temporary jpeg: %w", err), http.StatusInternalServerError)
-				return
-			}
-
-			err = zipFile(file.Filename, out, zipWriter)
+			err = util.ZipFile(file.Filename, resizedFile, zipWriter)
 			if err != nil {
 				http.Error(w, fmt.Sprintf("error zipping jpeg: %w", err), http.StatusInternalServerError)
-				return
-			}
-
-			err = os.Remove(file.Filename)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("error deleting temporary jpeg: %w", err), http.StatusInternalServerError)
 				return
 			}
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"output.zip\"")
-	io.Copy(w, output)
+	fi, err := os.Stat("output.zip")
+	if err != nil {
+		http.Error(w, "error getting output.zip file info", http.StatusInternalServerError)
+		return
+	}
+
+	if fi.Size() > 0 {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"output.zip\"")
+		io.Copy(w, output)
+	}
 
 	return
-}
-
-func zipFile(filename string, file io.Reader, zipWriter *zip.Writer) error {
-	fileInfo, err := os.Stat(filename)
-	if err != nil {
-		return err
-	}
-
-	header, err := zip.FileInfoHeader(fileInfo)
-	if err != nil {
-		return err
-	}
-	header.Name = filename
-	header.Method = zip.Deflate
-
-	writer, err := zipWriter.CreateHeader(header)
-	if err != nil {
-		return err
-	}
-
-	n, err := io.Copy(writer, file)
-	if err != nil {
-		return err
-	}
-
-	if n != fileInfo.Size() {
-		return fmt.Errorf("wrote %d bytes instead of expected %d for %s", n, fileInfo.Size(), filename)
-	}
-
-	return nil
 }

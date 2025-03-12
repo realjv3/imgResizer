@@ -12,12 +12,14 @@ import (
 )
 
 func main() {
+	log.Println("starting server...")
+
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Timeout(time.Second * 60))
 
-	r.Post("/", rest.Resize)
+	r.Post("/", rest.ResizeHandler)
 
 	log.Fatal(http.ListenAndServe(":8080", r))
 }
