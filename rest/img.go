@@ -39,45 +39,64 @@ func ResizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	output, err := os.Create("output.zip")
-	if err != nil {
-		http.Error(w, "error creating output.zip", http.StatusInternalServerError)
-		return
-	}
-	defer output.Close()
+	var resizedFile io.Reader
+	var zipWriter *zip.Writer
+	var zipOutput *os.File
+	zipFiles := len(r.MultipartForm.File) > 1
 
-	zipWriter := zip.NewWriter(output)
-	defer zipWriter.Close()
+	if zipFiles {
+		zipOutput, err = os.Create("output.zip")
+		if err != nil {
+			http.Error(w, "error creating output.zip", http.StatusInternalServerError)
+			return
+		}
+		defer zipOutput.Close()
+
+		zipWriter = zip.NewWriter(zipOutput)
+		defer zipWriter.Close()
+	}
 
 	for _, files := range r.MultipartForm.File {
 		for _, file := range files {
 			f, _ := file.Open()
 			defer f.Close()
 
-			resizedFile, err := util.ResizeFile(f, cols, rows)
+			resizedFile, err = util.ResizeFile(f, cols, rows)
 			if err != nil {
 				http.Error(w, fmt.Sprintf("error resizing file: %w", err), http.StatusInternalServerError)
 				return
 			}
 
-			err = util.ZipFile(file.Filename, resizedFile, zipWriter)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("error zipping jpeg: %w", err), http.StatusInternalServerError)
-				return
+			if zipFiles {
+				err = util.ZipFile(file.Filename, resizedFile, zipWriter)
+				if err != nil {
+					http.Error(w, fmt.Sprintf("error zipping jpeg: %w", err), http.StatusInternalServerError)
+					return
+				}
 			}
 		}
 	}
 
-	fi, err := os.Stat("output.zip")
-	if err != nil {
-		http.Error(w, "error getting output.zip file info", http.StatusInternalServerError)
-		return
-	}
+	if zipFiles {
+		fi, err := os.Stat("output.zip")
+		if err != nil {
+			http.Error(w, "error getting output.zip file info", http.StatusInternalServerError)
+			return
+		}
 
-	if fi.Size() > 0 {
-		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", "attachment; filename=\"output.zip\"")
-		io.Copy(w, output)
+		if fi.Size() > 0 {
+			w.Header().Set("Content-Type", "application/zip")
+			w.Header().Set("Content-Disposition", "attachment; filename=\"output.zip\"")
+		}
+		_, err = io.Copy(w, zipOutput)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("error returning jpeg: %w", err), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"resized.jpg\"")
+		_, err = io.Copy(w, resizedFile)
 	}
 
 	return
